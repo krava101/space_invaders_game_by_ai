@@ -382,6 +382,44 @@
             this._tone(180, 0.1, "sawtooth", 0.12, -10);
           }
 
+          pickup(kind) {
+            if (!this.enabled) return;
+
+            // маленькі “джингли” різного характеру
+            if (kind === "heart") {
+              // теплий “heal”: низ->вверх (мажорний настрій)
+              this._tone(330, 0.08, "triangle", 0.16);
+              this._tone(440, 0.08, "triangle", 0.14);
+              this._tone(550, 0.1, "triangle", 0.12);
+              return;
+            }
+
+            if (kind === "shield") {
+              // “щит”: дзвінкий біп + нижчий підтонус
+              this._tone(740, 0.1, "square", 0.14);
+              this._tone(370, 0.12, "triangle", 0.1);
+              return;
+            }
+
+            if (kind === "double") {
+              // “double”: два короткі підскоки
+              this._tone(520, 0.07, "square", 0.14);
+              this._tone(780, 0.07, "square", 0.12, 8);
+              return;
+            }
+
+            if (kind === "spread") {
+              // “spread”: тріоль / маленький арпеджіо
+              this._tone(392, 0.07, "sawtooth", 0.12);
+              this._tone(494, 0.07, "sawtooth", 0.11);
+              this._tone(587, 0.09, "sawtooth", 0.1);
+              return;
+            }
+
+            // fallback
+            this._tone(660, 0.08, "triangle", 0.12);
+          }
+
           startMusic() {
             if (!this.enabled || this.musicOn) return;
             this.musicOn = true;
@@ -1169,8 +1207,8 @@
             } else if (kind === "spread") {
               setPower("spread", 10);
             }
-            // невеличкий "приємний" звук
-            audio.shoot();
+
+            audio.pickup(kind);
           }
         }
 

@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Space Invaders (Single-File)</title>
+  <style>
+    :root{
+      --bg:#05070c;
+      --ui:#d6e7ff;
+      --neon-green:#32ff7e;
+      --neon-red:#ff3b3b;
+      --neon-yellow:#ffe66d;
+      --panel:rgba(8,12,22,.55);
+      --panel2:rgba(8,12,22,.75);
+      --shadow:0 12px 40px rgba(0,0,0,.45);
+    }
+    html,body{
+      height:100%;
+      margin:0;
+      background:radial-gradient(1200px 800px at 50% 30%, #0b1530 0%, var(--bg) 55%, #03040a 100%);
+      color:var(--ui);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
+      overflow:hidden;
+    }
+
+    .wrap{
+      position:fixed;
+      inset:0;
+      display:grid;
+      place-items:center;
+    }
+
+    canvas{
+      /* canvas size is controlled by JS; CSS keeps it crisp-ish */
+      border-radius:18px;
+      box-shadow: var(--shadow);
+      background: transparent;
+      outline: 1px solid rgba(255,255,255,.06);
+      max-width: 98vw;
+      max-height: 92vh;
+    }
+
+    .hud{
+      position:fixed;
+      top:14px;
+      left:50%;
+      transform:translateX(-50%);
+      display:flex;
+      gap:12px;
+      padding:10px 12px;
+      border-radius:14px;
+      background:var(--panel);
+      backdrop-filter: blur(8px);
+      outline: 1px solid rgba(255,255,255,.07);
+      box-shadow: 0 10px 30px rgba(0,0,0,.25);
+      user-select:none;
+      align-items:center;
+      flex-wrap:wrap;
+      justify-content:center;
+    }
+    .hud .chip{
+      padding:6px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      outline:1px solid rgba(255,255,255,.08);
+      font-size:14px;
+      letter-spacing:.2px;
+      display:flex;
+      gap:8px;
+      align-items:center;
+      white-space:nowrap;
+    }
+    .dot{
+      width:9px;height:9px;border-radius:50%;
+      background:rgba(255,255,255,.2);
+      box-shadow: 0 0 14px rgba(255,255,255,.12);
+      display:inline-block;
+    }
+    .dot.green{ background: var(--neon-green); box-shadow:0 0 14px rgba(50,255,126,.35); }
+    .dot.red{ background: var(--neon-red); box-shadow:0 0 14px rgba(255,59,59,.35); }
+    .dot.yellow{ background: var(--neon-yellow); box-shadow:0 0 14px rgba(255,230,109,.35); }
+
+    .overlay{
+      position:fixed;
+      inset:0;
+      display:grid;
+      place-items:center;
+      pointer-events:none;
+    }
+    .panel{
+      pointer-events:none;
+      width:min(560px, 92vw);
+      border-radius:20px;
+      padding:18px 18px 16px;
+      background:var(--panel2);
+      outline:1px solid rgba(255,255,255,.08);
+      box-shadow: var(--shadow);
+      text-align:center;
+      transform: translateY(8px);
+      opacity:0;
+      transition: opacity .25s ease, transform .25s ease;
+    }
+    .panel.show{
+      opacity:1;
+      transform: translateY(0);
+    }
+    .title{
+      font-size:22px;
+      letter-spacing:.4px;
+      margin:2px 0 8px;
+    }
+    .sub{
+      font-size:14px;
+      opacity:.9;
+      margin:0 0 10px;
+      line-height:1.35;
+    }
+    .kbd{
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:8px;
+      background:rgba(255,255,255,.08);
+      outline:1px solid rgba(255,255,255,.12);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:12px;
+      margin:2px 3px;
+    }
+    .hint{
+      font-size:12px;
+      opacity:.75;
+      margin-top:10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" aria-label="Space Invaders Canvas"></canvas>
+  </div>
+
+  <div class="hud" id="hud">
+    <div class="chip"><span class="dot green"></span>Score: <strong id="score">0</strong></div>
+    <div class="chip"><span class="dot yellow"></span>High: <strong id="high">0</strong></div>
+    <div class="chip"><span class="dot red"></span>Lives: <strong id="lives">3</strong></div>
+    <div class="chip"><span class="dot"></span>Level: <strong id="level">1</strong></div>
+    <div class="chip" id="audioChip" title="Audio starts after first key press/click">🔈 <span id="audioState">Tap/Key to enable audio</span></div>
+  </div>
+
+  <div class="overlay">
+    <div class="panel show" id="panel">
+      <div class="title" id="panelTitle">SPACE INVADERS</div>
+      <p class="sub" id="panelText">
+        <span class="kbd">A</span>/<span class="kbd">D</span> або <span class="kbd">←</span>/<span class="kbd">→</span> — рух,
+        <span class="kbd">Space</span> — постріл.<br/>
+        Натисніть будь-яку клавішу або клікніть, щоб почати.
+      </p>
+      <div class="hint">Порада: тримайте ритм пострілів — вороги прискорюються, коли їх стає менше.</div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  /***************************************************************************
+   * Single-file Space Invaders
+   * - HTML5 Canvas (60fps via requestAnimationFrame)
+   * - Vanilla JS only
+   * - Web Audio API (simple synth SFX + looping music)
+   * - localStorage high score
+   * - Responsive scaling with letterboxing
+   ***************************************************************************/
+
+  // --- DOM refs
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d", { alpha: true });
+
+  const uiScore = document.getElementById("score");
+  const uiHigh = document.getElementById("high");
+  const uiLives = document.getElementById("lives");
+  const uiLevel = document.getElementById("level");
+  const audioState = document.getElementById("audioState");
+  const panel = document.getElementById("panel");
+  const panelTitle = document.getElementById("panelTitle");
+  const panelText = document.getElementById("panelText");
+
+  // --- Logical resolution (game uses these coordinates)
+  const LOGICAL_W = 800;
+  const LOGICAL_H = 600;
+
+  // --- Responsive viewport metrics (computed on resize)
+  let dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  let view = {
+    cssW: 800,
+    cssH: 600,
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0
+  };
+
+  function resize() {
+    dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+    // Fit canvas into viewport with margins for HUD
+    const marginTop = 74;   // space for HUD
+    const margin = 16;
+    const availW = Math.max(320, window.innerWidth - margin * 2);
+    const availH = Math.max(320, window.innerHeight - marginTop - margin);
+
+    // preserve aspect ratio of logical game
+    const scale = Math.min(availW / LOGICAL_W, availH / LOGICAL_H);
+
+    view.scale = scale;
+    view.cssW = Math.floor(LOGICAL_W * scale);
+    view.cssH = Math.floor(LOGICAL_H * scale);
+
+    // letterbox offsets in CSS pixels (centered)
+    view.offsetX = Math.floor((window.innerWidth - view.cssW) / 2);
+    view.offsetY = Math.floor((window.innerHeight - marginTop - view.cssH) / 2) + marginTop;
+
+    // set canvas CSS size and actual pixel buffer size
+    canvas.style.width = view.cssW + "px";
+    canvas.style.height = view.cssH + "px";
+    canvas.style.position = "fixed";
+    canvas.style.left = view.offsetX + "px";
+    canvas.style.top = view.offsetY + "px";
+
+    canvas.width = Math.floor(view.cssW * dpr);
+    canvas.height = Math.floor(view.cssH * dpr);
+
+    // Reset transform; we will set it per frame
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false; // more retro
+  }
+  window.addEventListener("resize", resize);
+
+  // --- Helpers
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // Axis-aligned bounding box collision
+  function aabb(a, b) {
+    return (
+      a.x < b.x + b.w &&
+      a.x + a.w > b.x &&
+      a.y < b.y + b.h &&
+      a.y + a.h > b.y
+    );
+  }
+
+  // --- Audio (Web Audio API)
+  class AudioManager {
+    constructor() {
+      this.ctx = null;
+      this.master = null;
+      this.musicGain = null;
+      this.sfxGain = null;
+      this.enabled = false;
+
+      // simple music scheduler
+      this.musicTimer = null;
+      this.musicStep = 0;
+      this.musicTempoMs = 150; // step time
+      this.musicOn = false;
+    }
+
+    ensure() {
+      if (this.enabled) return;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+
+      this.ctx = new Ctx();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.22;
+      this.master.connect(this.ctx.destination);
+
+      this.musicGain = this.ctx.createGain();
+      this.sfxGain = this.ctx.createGain();
+      this.musicGain.gain.value = 0.18;
+      this.sfxGain.gain.value = 0.9;
+
+      this.musicGain.connect(this.master);
+      this.sfxGain.connect(this.master);
+
+      this.enabled = true;
+      audioState.textContent = "Audio: ON";
+    }
+
+    _tone(freq, dur = 0.08, type = "square", gain = 0.2, detune = 0) {
+      if (!this.enabled) return;
+      const t0 = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.detune.value = detune;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+      osc.connect(g);
+      g.connect(this.sfxGain);
+
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.02);
+    }
+
+    shoot() {
+      // quick rising zap
+      this._tone(880, 0.06, "square", 0.22, 0);
+      this._tone(1320, 0.05, "square", 0.12, 6);
+    }
+
+    explosion() {
+      // noisy-ish boom by stacking detuned squares
+      this._tone(110, 0.14, "square", 0.28, -20);
+      this._tone(140, 0.14, "square", 0.22, 15);
+      this._tone(70, 0.16, "square", 0.18, 0);
+    }
+
+    hit() {
+      this._tone(220, 0.09, "sawtooth", 0.18, 0);
+      this._tone(180, 0.10, "sawtooth", 0.12, -10);
+    }
+
+    startMusic() {
+      if (!this.enabled || this.musicOn) return;
+      this.musicOn = true;
+      const seq = [
+        196, 220, 247, 220,
+        196, 220, 262, 220,
+        196, 220, 247, 220,
+        196, 175, 196, 165
+      ];
+      this.musicStep = 0;
+
+      this.musicTimer = setInterval(() => {
+        if (!this.enabled || !this.musicOn) return;
+        const t0 = this.ctx.currentTime;
+        const f = seq[this.musicStep % seq.length];
+
+        const osc = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.value = f;
+
+        // short pluck envelope
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+
+        osc.connect(g);
+        g.connect(this.musicGain);
+        osc.start(t0);
+        osc.stop(t0 + 0.14);
+
+        this.musicStep++;
+      }, this.musicTempoMs);
+    }
+
+    stopMusic() {
+      this.musicOn = false;
+      if (this.musicTimer) {
+        clearInterval(this.musicTimer);
+        this.musicTimer = null;
+      }
+    }
+  }
+
+  const audio = new AudioManager();
+
+  // --- Entities
+  class Bullet {
+    constructor(x, y, vy, owner) {
+      this.x = x; this.y = y;
+      this.vy = vy;
+      this.owner = owner; // "player" or "alien"
+      this.w = owner === "player" ? 4 : 5;
+      this.h = owner === "player" ? 12 : 14;
+      this.dead = false;
+    }
+    update(dt) {
+      this.y += this.vy * dt;
+      if (this.y < -40 || this.y > LOGICAL_H + 40) this.dead = true;
+    }
+    draw(g) {
+      g.save();
+      g.fillStyle = this.owner === "player" ? "rgba(255,230,109,0.95)" : "rgba(255,80,80,0.95)";
+      g.shadowBlur = 14;
+      g.shadowColor = this.owner === "player" ? "rgba(255,230,109,0.35)" : "rgba(255,80,80,0.35)";
+      g.fillRect(this.x, this.y, this.w, this.h);
+      g.restore();
+    }
+  }
+
+  class Particle {
+    constructor(x, y, vx, vy, life, size) {
+      this.x=x; this.y=y;
+      this.vx=vx; this.vy=vy;
+      this.life=life;
+      this.maxLife=life;
+      this.size=size;
+      this.dead=false;
+    }
+    update(dt) {
+      this.life -= dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      this.vx *= 0.985;
+      this.vy *= 0.985;
+      if (this.life <= 0) this.dead = true;
+    }
+    draw(g, color) {
+      const a = Math.max(0, this.life / this.maxLife);
+      g.save();
+      g.globalAlpha = a;
+      g.fillStyle = color;
+      g.fillRect(this.x, this.y, this.size, this.size);
+      g.restore();
+    }
+  }
+
+  class Player {
+    constructor() {
+      this.w = 42;
+      this.h = 22;
+      this.x = (LOGICAL_W - this.w) / 2;
+      this.y = LOGICAL_H - 60;
+      this.speed = 360; // px/s
+      this.cooldown = 0;
+      this.cooldownMax = 0.20; // seconds between shots
+      this.invuln = 0;
+    }
+    update(dt, input) {
+      const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+      this.x += dir * this.speed * dt;
+      this.x = clamp(this.x, 18, LOGICAL_W - this.w - 18);
+
+      if (this.cooldown > 0) this.cooldown -= dt;
+      if (this.invuln > 0) this.invuln -= dt;
+    }
+    canShoot() { return this.cooldown <= 0; }
+    shoot(bullets) {
+      this.cooldown = this.cooldownMax;
+      bullets.push(new Bullet(this.x + this.w/2 - 2, this.y - 12, -720, "player"));
+      audio.shoot();
+    }
+    draw(g) {
+      g.save();
+
+      // blink while invulnerable
+      if (this.invuln > 0 && Math.floor(this.invuln * 14) % 2 === 0) {
+        g.globalAlpha = 0.4;
+      }
+
+      // Neon green ship (simple retro geometry)
+      g.fillStyle = "rgba(50,255,126,0.95)";
+      g.shadowBlur = 18;
+      g.shadowColor = "rgba(50,255,126,0.35)";
+
+      // body
+      g.fillRect(this.x, this.y, this.w, this.h);
+
+      // cockpit
+      g.shadowBlur = 8;
+      g.shadowColor = "rgba(255,255,255,0.20)";
+      g.fillStyle = "rgba(230,255,255,0.55)";
+      g.fillRect(this.x + this.w*0.36, this.y + 4, this.w*0.28, 8);
+
+      // fin
+      g.shadowBlur = 18;
+      g.shadowColor = "rgba(50,255,126,0.35)";
+      g.fillStyle = "rgba(50,255,126,0.95)";
+      g.fillRect(this.x + this.w*0.45, this.y - 10, this.w*0.10, 10);
+
+      g.restore();
+    }
+  }
+
+  class Alien {
+    constructor(x, y, type=0) {
+      this.x=x; this.y=y;
+      this.type=type;
+      this.w=34;
+      this.h=22;
+      this.alive=true;
+      this.anim=0;
+    }
+    update(dt) { this.anim += dt; }
+    draw(g) {
+      if (!this.alive) return;
+      g.save();
+      const wobble = (Math.sin(this.anim * 8) * 1.5);
+
+      g.fillStyle = "rgba(255,59,59,0.95)";
+      g.shadowBlur = 16;
+      g.shadowColor = "rgba(255,59,59,0.35)";
+
+      // simple "pixel-ish" alien: body + eyes + legs
+      g.fillRect(this.x, this.y, this.w, this.h);
+
+      g.shadowBlur = 6;
+      g.shadowColor = "rgba(255,255,255,0.15)";
+      g.fillStyle = "rgba(255,255,255,0.70)";
+      g.fillRect(this.x + 7, this.y + 6, 6, 6);
+      g.fillRect(this.x + this.w - 13, this.y + 6, 6, 6);
+
+      g.shadowBlur = 16;
+      g.shadowColor = "rgba(255,59,59,0.35)";
+      g.fillStyle = "rgba(255,59,59,0.95)";
+
+      // legs
+      g.fillRect(this.x + 5, this.y + this.h + wobble, 6, 6);
+      g.fillRect(this.x + this.w - 11, this.y + this.h - wobble, 6, 6);
+
+      g.restore();
+    }
+  }
+
+  // --- Background stars
+  const stars = [];
+  function initStars() {
+    stars.length = 0;
+    const count = 130;
+    for (let i=0;i<count;i++){
+      stars.push({
+        x: Math.random()*LOGICAL_W,
+        y: Math.random()*LOGICAL_H,
+        s: rand(0.6, 2.2),
+        v: rand(10, 55),
+        a: rand(0.25, 0.9)
+      });
+    }
+  }
+  function updateStars(dt) {
+    for (const st of stars) {
+      st.y += st.v * dt;
+      if (st.y > LOGICAL_H + 10) {
+        st.y = -10;
+        st.x = Math.random()*LOGICAL_W;
+        st.s = rand(0.6, 2.2);
+        st.v = rand(10, 55);
+        st.a = rand(0.25, 0.9);
+      }
+    }
+  }
+  function drawStars(g) {
+    g.save();
+    for (const st of stars) {
+      g.globalAlpha = st.a;
+      g.fillStyle = "rgba(255,255,255,1)";
+      g.fillRect(st.x, st.y, st.s, st.s);
+    }
+    g.restore();
+  }
+
+  // --- Game state
+  const GAME_STATE = {
+    START: "start",
+    PLAYING: "playing",
+    GAMEOVER: "gameover"
+  };
+
+  let state = GAME_STATE.START;
+
+  // Persistent high score
+  const HS_KEY = "space_invaders_highscore_v1";
+  let highScore = Number(localStorage.getItem(HS_KEY) || "0") || 0;
+  uiHigh.textContent = highScore.toString();
+
+  let level = 1;
+  let score = 0;
+  let lives = 3;
+
+  const input = { left:false, right:false, shoot:false };
+
+  const player = new Player();
+  let aliens = [];
+  let bullets = [];
+  let particles = [];
+
+  // Formation movement
+  let formation = {
+    dir: 1,                 // 1 right, -1 left
+    speed: 52,              // base px/s (will scale with remaining aliens / level)
+    drop: 20,               // drop when hitting edge
+    xPadding: 70,           // margins from sides
+    yStart: 74,
+    stepX: 52,
+    stepY: 40,
+    edgeHitCooldown: 0
+  };
+
+  // Alien shooting timer
+  let alienFireTimer = 0;
+
+  // Timing
+  let last = performance.now();
+
+  function resetGame(fullReset = true) {
+    if (fullReset) {
+      level = 1;
+      score = 0;
+      lives = 3;
+    }
+
+    uiLevel.textContent = level.toString();
+    uiScore.textContent = score.toString();
+    uiLives.textContent = lives.toString();
+
+    bullets = [];
+    particles = [];
+
+    player.x = (LOGICAL_W - player.w)/2;
+    player.y = LOGICAL_H - 60;
+    player.cooldown = 0;
+    player.invuln = 0;
+
+    // create 5x10 aliens
+    aliens = [];
+    const rows = 5, cols = 10;
+
+    const totalWidth = (cols - 1) * formation.stepX + 34;
+    const startX = (LOGICAL_W - totalWidth)/2;
+    for (let r=0;r<rows;r++){
+      for (let c=0;c<cols;c++){
+        const x = startX + c*formation.stepX;
+        const y = formation.yStart + r*formation.stepY;
+        aliens.push(new Alien(x, y, r));
+      }
+    }
+
+    formation.dir = 1;
+    formation.edgeHitCooldown = 0;
+    alienFireTimer = 0;
+  }
+
+  function showPanel(title, textHtml) {
+    panelTitle.textContent = title;
+    panelText.innerHTML = textHtml;
+    panel.classList.add("show");
+  }
+  function hidePanel() {
+    panel.classList.remove("show");
+  }
+
+  function explode(x, y, color) {
+    const n = 22;
+    for (let i=0;i<n;i++){
+      const ang = rand(0, Math.PI*2);
+      const sp = rand(90, 280);
+      const vx = Math.cos(ang)*sp;
+      const vy = Math.sin(ang)*sp;
+      particles.push(new Particle(x, y, vx, vy, rand(0.22, 0.55), rand(2, 4)));
+    }
+    // add a few bright sparks
+    for (let i=0;i<8;i++){
+      particles.push(new Particle(x, y, rand(-420,420), rand(-420,420), rand(0.08,0.18), rand(2,3)));
+    }
+    audio.explosion();
+  }
+
+  function aliveAliens() {
+    let n=0;
+    for (const a of aliens) if (a.alive) n++;
+    return n;
+  }
+
+  // Complex-ish part: formation edge detection + drop
+  function updateAliens(dt) {
+    const alive = aliveAliens();
+    if (alive === 0) return;
+
+    // Speed-up as fewer remain, plus level scaling
+    // (classic feeling: becomes frantic near the end)
+    const remainingFactor = 1 + (1 - alive / aliens.length) * 2.8;
+    const levelFactor = 1 + (level - 1) * 0.22;
+    const speed = formation.speed * remainingFactor * levelFactor;
+
+    // Find formation bounds
+    let minX = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const a of aliens) {
+      if (!a.alive) continue;
+      minX = Math.min(minX, a.x);
+      maxX = Math.max(maxX, a.x + a.w);
+      maxY = Math.max(maxY, a.y + a.h);
+    }
+
+    // Move horizontally
+    const dx = formation.dir * speed * dt;
+    for (const a of aliens) {
+      if (!a.alive) continue;
+      a.x += dx;
+      a.update(dt);
+    }
+
+    // Edge hit logic (cooldown avoids repeated drops within one edge frame)
+    formation.edgeHitCooldown -= dt;
+    const leftLimit = formation.xPadding;
+    const rightLimit = LOGICAL_W - formation.xPadding;
+
+    if (formation.edgeHitCooldown <= 0) {
+      if (minX <= leftLimit && formation.dir < 0) {
+        formation.dir = 1;
+        dropAliens();
+      } else if (maxX >= rightLimit && formation.dir > 0) {
+        formation.dir = -1;
+        dropAliens();
+      }
+    }
+
+    // Lose condition: aliens reach near bottom
+    if (maxY >= LOGICAL_H - 90) {
+      endGame(false, "INVADERS LANDED");
+    }
+  }
+
+  function dropAliens() {
+    for (const a of aliens) {
+      if (!a.alive) continue;
+      a.y += formation.drop;
+    }
+    formation.edgeHitCooldown = 0.18;
+  }
+
+  function alienShoot(dt) {
+    if (state !== GAME_STATE.PLAYING) return;
+
+    const alive = aliveAliens();
+    if (alive === 0) return;
+
+    alienFireTimer += dt;
+
+    // fire rate increases as fewer aliens remain + with level
+    const baseInterval = 1.10;
+    const remainingFactor = 1 - (alive / aliens.length) * 0.55; // fewer => smaller interval
+    const levelFactor = Math.max(0.55, 1 - (level - 1) * 0.05);
+
+    const interval = baseInterval * (1 - remainingFactor) * levelFactor;
+    if (alienFireTimer < interval) return;
+    alienFireTimer = 0;
+
+    // Choose a "frontline" alien from a random column
+    // Approach: group by column index based on x proximity to grid steps, take lowest alive.
+    const cols = 10;
+    const buckets = Array.from({length: cols}, () => []);
+    // Estimate column by nearest to startX + c*stepX
+    // We'll compute startX from current living bounds for better robustness.
+    let minX = Infinity;
+    for (const a of aliens) if (a.alive) minX = Math.min(minX, a.x);
+    const approxStartX = minX; // good enough
+
+    for (const a of aliens) {
+      if (!a.alive) continue;
+      const c = clamp(Math.round((a.x - approxStartX) / formation.stepX), 0, cols-1);
+      buckets[c].push(a);
+    }
+
+    const cPick = Math.floor(Math.random() * cols);
+    const options = buckets[cPick].length ? buckets[cPick] : buckets.flat().filter(b => b.length).map(b => b[0]);
+    if (!options || options.length === 0) return;
+
+    // pick the lowest y (frontline)
+    let shooter = options[0];
+    for (const a of options) {
+      if (a.y > shooter.y) shooter = a;
+    }
+
+    bullets.push(new Bullet(shooter.x + shooter.w/2 - 2, shooter.y + shooter.h + 2, 420 + level*18, "alien"));
+    audio.shoot(); // same zap, acceptable retro vibe
+  }
+
+  function updateBullets(dt) {
+    for (const b of bullets) b.update(dt);
+    bullets = bullets.filter(b => !b.dead);
+  }
+
+  function updateParticles(dt) {
+    for (const p of particles) p.update(dt);
+    particles = particles.filter(p => !p.dead);
+  }
+
+  function handleCollisions() {
+    if (state !== GAME_STATE.PLAYING) return;
+
+    // Player bullets vs aliens
+    for (const b of bullets) {
+      if (b.dead || b.owner !== "player") continue;
+
+      for (const a of aliens) {
+        if (!a.alive) continue;
+
+        if (aabb({x:b.x,y:b.y,w:b.w,h:b.h}, {x:a.x,y:a.y,w:a.w,h:a.h})) {
+          b.dead = true;
+          a.alive = false;
+
+          // score by row (higher rows -> more points)
+          const rowBonus = (5 - a.type) * 8; // 8..40
+          score += 20 + rowBonus;
+          uiScore.textContent = score.toString();
+
+          explode(a.x + a.w/2, a.y + a.h/2, "rgba(255,80,80,0.95)");
+          break;
+        }
+      }
+    }
+
+    // Alien bullets vs player
+    for (const b of bullets) {
+      if (b.dead || b.owner !== "alien") continue;
+      if (player.invuln > 0) continue;
+
+      if (aabb({x:b.x,y:b.y,w:b.w,h:b.h}, {x:player.x,y:player.y,w:player.w,h:player.h})) {
+        b.dead = true;
+        lives -= 1;
+        uiLives.textContent = lives.toString();
+        audio.hit();
+        explode(player.x + player.w/2, player.y + player.h/2, "rgba(50,255,126,0.95)");
+        player.invuln = 1.1;
+
+        if (lives <= 0) {
+          endGame(false, "YOU WERE DESTROYED");
+        }
+      }
+    }
+
+    // Next level when all aliens dead
+    if (aliveAliens() === 0 && state === GAME_STATE.PLAYING) {
+      level += 1;
+      uiLevel.textContent = level.toString();
+      // small reward: +1 life every 3 levels (capped)
+      if (level % 3 === 0 && lives < 5) {
+        lives += 1;
+        uiLives.textContent = lives.toString();
+      }
+      resetGame(false);
+    }
+  }
+
+  function endGame(win, headline) {
+    state = GAME_STATE.GAMEOVER;
+
+    audio.stopMusic();
+
+    // High score update
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem(HS_KEY, String(highScore));
+      uiHigh.textContent = String(highScore);
+    }
+
+    const msg = `
+      <div style="margin-bottom:8px">${headline}</div>
+      <div style="opacity:.9">Score: <strong>${score}</strong> &nbsp;•&nbsp; High: <strong>${highScore}</strong></div>
+      <div style="margin-top:10px">
+        Натисніть <span class="kbd">Enter</span>, щоб почати знову.
+      </div>
+    `;
+    showPanel("GAME OVER", msg);
+  }
+
+  // --- Input
+  function onKey(e, down) {
+    if (e.code === "ArrowLeft" || e.code === "KeyA") input.left = down;
+    if (e.code === "ArrowRight" || e.code === "KeyD") input.right = down;
+    if (e.code === "Space") input.shoot = down;
+
+    if (down) {
+      // Start audio on first interaction due to autoplay policies
+      audio.ensure();
+      if (audio.enabled) audio.startMusic();
+      if (audio.enabled) audioState.textContent = "Audio: ON";
+    }
+
+    // Start from intro
+    if (down && state === GAME_STATE.START) {
+      startPlaying();
+    }
+
+    // Restart
+    if (down && e.code === "Enter" && state === GAME_STATE.GAMEOVER) {
+      state = GAME_STATE.PLAYING;
+      score = 0;
+      lives = 3;
+      level = 1;
+      resetGame(true);
+      hidePanel();
+      audio.ensure();
+      if (audio.enabled) audio.startMusic();
+    }
+  }
+
+  window.addEventListener("keydown", (e) => {
+    // prevent page scroll with arrows/space
+    if (["ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+    onKey(e, true);
+  }, { passive:false });
+
+  window.addEventListener("keyup", (e) => onKey(e, false));
+
+  // Also allow click/tap to start (useful for laptops/tablets)
+  window.addEventListener("pointerdown", () => {
+    audio.ensure();
+    if (audio.enabled) audio.startMusic();
+    if (state === GAME_STATE.START) startPlaying();
+  });
+
+  function startPlaying() {
+    state = GAME_STATE.PLAYING;
+    hidePanel();
+    resetGame(true);
+  }
+
+  // --- Rendering
+  function beginFrameTransform() {
+    // Map logical coords to pixel buffer with letterboxing
+    const sx = (canvas.width / dpr) / LOGICAL_W;
+    const sy = (canvas.height / dpr) / LOGICAL_H;
+    // These should match view.scale, but we compute from actual canvas.
+    const scale = Math.min(sx, sy);
+
+    // Center in canvas CSS area (letterbox)
+    const cssW = canvas.width / dpr;
+    const cssH = canvas.height / dpr;
+    const ox = (cssW - LOGICAL_W * scale) / 2;
+    const oy = (cssH - LOGICAL_H * scale) / 2;
+
+    // Apply transform in device pixels
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, ox * dpr, oy * dpr);
+  }
+
+  function drawBackground(g) {
+    // Space gradient overlay + stars
+    g.save();
+    // subtle vignette
+    const grd = g.createLinearGradient(0,0,0,LOGICAL_H);
+    grd.addColorStop(0, "rgba(10,18,40,0.35)");
+    grd.addColorStop(1, "rgba(0,0,0,0.45)");
+    g.fillStyle = grd;
+    g.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+    g.restore();
+
+    drawStars(g);
+
+    // horizon glow near bottom
+    g.save();
+    const glow = g.createRadialGradient(LOGICAL_W/2, LOGICAL_H-20, 20, LOGICAL_W/2, LOGICAL_H-20, 320);
+    glow.addColorStop(0, "rgba(80,160,255,0.10)");
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = glow;
+    g.fillRect(0,0,LOGICAL_W,LOGICAL_H);
+    g.restore();
+  }
+
+  function drawAliens(g) {
+    for (const a of aliens) a.draw(g);
+  }
+
+  function drawBullets(g) {
+    for (const b of bullets) b.draw(g);
+  }
+
+  function drawParticles(g) {
+    for (const p of particles) {
+      // choose color by approximate origin (a bit hacky but fine)
+      // We'll use yellow sparks for shorter life; red/green for others.
+      const c = p.maxLife < 0.2 ? "rgba(255,230,109,0.95)" : "rgba(255,255,255,0.85)";
+      p.draw(g, c);
+    }
+  }
+
+  function drawFloorLine(g) {
+    g.save();
+    g.globalAlpha = 0.55;
+    g.fillStyle = "rgba(255,255,255,0.08)";
+    g.fillRect(0, LOGICAL_H - 86, LOGICAL_W, 2);
+    g.restore();
+  }
+
+  function drawGame(g) {
+    // Clear full pixel canvas first (in pixel coords)
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // Now draw in logical coords
+    beginFrameTransform();
+
+    drawBackground(g);
+    drawFloorLine(g);
+
+    drawAliens(g);
+    drawBullets(g);
+    drawParticles(g);
+    player.draw(g);
+
+    // small "start" caption if in START state (but we use panel)
+  }
+
+  // --- Update loop
+  function tick(now) {
+    const dt = Math.min(0.033, (now - last) / 1000); // cap delta for stability
+    last = now;
+
+    if (state === GAME_STATE.PLAYING) {
+      updateStars(dt);
+      player.update(dt, input);
+
+      if (input.shoot && player.canShoot()) {
+        // limit total player bullets to keep classic feel
+        const playerBullets = bullets.filter(b => b.owner === "player" && !b.dead).length;
+        if (playerBullets < 3) player.shoot(bullets);
+      }
+
+      updateAliens(dt);
+      alienShoot(dt);
+
+      updateBullets(dt);
+      updateParticles(dt);
+      handleCollisions();
+
+      // update high score live (optional)
+      if (score > highScore) {
+        highScore = score;
+        uiHigh.textContent = String(highScore);
+      }
+    } else {
+      // Even in menus: animate stars a bit for life
+      updateStars(dt * 0.6);
+      updateParticles(dt);
+    }
+
+    drawGame(ctx);
+    requestAnimationFrame(tick);
+  }
+
+  // --- Init
+  function init() {
+    resize();
+    initStars();
+    resetGame(true);
+
+    showPanel("SPACE INVADERS", `
+      <span class="kbd">A</span>/<span class="kbd">D</span> або <span class="kbd">←</span>/<span class="kbd">→</span> — рух,
+      <span class="kbd">Space</span> — постріл.<br/>
+      Натисніть будь-яку клавішу або клікніть, щоб почати.
+    `);
+
+    requestAnimationFrame((t) => {
+      last = t;
+      requestAnimationFrame(tick);
+    });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

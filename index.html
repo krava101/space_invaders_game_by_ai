@@ -86,6 +86,15 @@
         align-items: center;
         white-space: nowrap;
       }
+
+      .hud .chip.clickable {
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      .hud .chip.clickable:active {
+        transform: translateY(1px);
+      }
+
       .dot {
         width: 9px;
         height: 9px;
@@ -189,11 +198,11 @@
         <span class="dot"></span>Level: <strong id="level">1</strong>
       </div>
       <div
-        class="chip"
+        class="chip clickable"
         id="audioChip"
-        title="Audio starts after first key press/click"
+        title="Click or press M to toggle sound"
       >
-        🔈 <span id="audioState">Tap/Key to enable audio</span>
+        🔈 <span id="audioState">ON</span>
       </div>
     </div>
 
@@ -217,15 +226,6 @@
       (() => {
         "use strict";
 
-        /***************************************************************************
-         * Single-file Space Invaders
-         * - HTML5 Canvas (60fps via requestAnimationFrame)
-         * - Vanilla JS only
-         * - Web Audio API (simple synth SFX + looping music)
-         * - localStorage high score
-         * - Responsive scaling with letterboxing
-         ***************************************************************************/
-
         // --- DOM refs
         const canvas = document.getElementById("game");
         const ctx = canvas.getContext("2d", { alpha: true });
@@ -240,6 +240,7 @@
         const panel = document.getElementById("panel");
         const panelTitle = document.getElementById("panelTitle");
         const panelText = document.getElementById("panelText");
+        const audioChip = document.getElementById("audioChip");
 
         // --- Logical resolution (game uses these coordinates)
         const LOGICAL_W = 800;
@@ -315,6 +316,8 @@
             this.musicGain = null;
             this.sfxGain = null;
             this.enabled = false;
+            this.muted = false;
+            this.baseMasterGain = 0.22;
 
             // simple music scheduler
             this.musicTimer = null;
@@ -330,14 +333,14 @@
 
             this.ctx = new Ctx();
             this.master = this.ctx.createGain();
-            this.master.gain.value = 0.22;
+            this.master.gain.value = this.baseMasterGain;
             this.master.connect(this.ctx.destination);
 
             this.musicGain = this.ctx.createGain();
             this.sfxGain = this.ctx.createGain();
-            this.musicGain.gain.value = 0.18;
-            this.sfxGain.gain.value = 0.9;
+            this.master.gain.value = this.baseMasterGain;
 
+            this.sfxGain.gain.value = 0.9;
             this.musicGain.connect(this.master);
             this.sfxGain.connect(this.master);
 
@@ -346,7 +349,7 @@
           }
 
           _tone(freq, dur = 0.08, type = "square", gain = 0.2, detune = 0) {
-            if (!this.enabled) return;
+            if (!this.enabled || this.muted) return;
             const t0 = this.ctx.currentTime;
             const osc = this.ctx.createOscillator();
             const g = this.ctx.createGain();
@@ -385,9 +388,7 @@
           pickup(kind) {
             if (!this.enabled) return;
 
-            // маленькі “джингли” різного характеру
             if (kind === "heart") {
-              // теплий “heal”: низ->вверх (мажорний настрій)
               this._tone(330, 0.08, "triangle", 0.16);
               this._tone(440, 0.08, "triangle", 0.14);
               this._tone(550, 0.1, "triangle", 0.12);
@@ -395,21 +396,18 @@
             }
 
             if (kind === "shield") {
-              // “щит”: дзвінкий біп + нижчий підтонус
               this._tone(740, 0.1, "square", 0.14);
               this._tone(370, 0.12, "triangle", 0.1);
               return;
             }
 
             if (kind === "double") {
-              // “double”: два короткі підскоки
               this._tone(520, 0.07, "square", 0.14);
               this._tone(780, 0.07, "square", 0.12, 8);
               return;
             }
 
             if (kind === "spread") {
-              // “spread”: тріоль / маленький арпеджіо
               this._tone(392, 0.07, "sawtooth", 0.12);
               this._tone(494, 0.07, "sawtooth", 0.11);
               this._tone(587, 0.09, "sawtooth", 0.1);
@@ -421,7 +419,7 @@
           }
 
           startMusic() {
-            if (!this.enabled || this.musicOn) return;
+            if (!this.enabled || this.musicOn || this.muted) return;
             this.musicOn = true;
             const seq = [
               196, 220, 247, 220, 196, 220, 262, 220, 196, 220, 247, 220, 196,
@@ -459,6 +457,22 @@
               clearInterval(this.musicTimer);
               this.musicTimer = null;
             }
+          }
+
+          setMuted(value) {
+            this.muted = !!value;
+
+            if (this.master) {
+              this.master.gain.value = this.muted ? 0 : this.baseMasterGain;
+            }
+
+            if (this.muted) {
+              this.stopMusic();
+            }
+          }
+
+          toggleMuted() {
+            this.setMuted(!this.muted);
           }
         }
 
@@ -617,11 +631,9 @@
               bullets.push(new Bullet(cx - 8, cy, -720, "player"));
               bullets.push(new Bullet(cx + 8, cy, -720, "player"));
             } else if (powerMode === "spread") {
-              // 3 кулі віялом: центральна + дві під кутом (імітуємо кут через vx)
               const b1 = new Bullet(cx, cy, -720, "player");
               const b2 = new Bullet(cx - 10, cy, -680, "player");
               const b3 = new Bullet(cx + 10, cy, -680, "player");
-              // додамо горизонтальну складову (легка модифікація Bullet)
               b2.vx = -180;
               b3.vx = 180;
               b1.vx = 0;
@@ -791,9 +803,9 @@
 
         let powerUps = [];
 
-        let shieldCharges = 0; // 0/1 (але можемо >1 якщо захочеш)
+        let shieldCharges = 0;
         let powerMode = "none"; // "none" | "double" | "spread"
-        let powerTimer = 0; // seconds remaining for current power
+        let powerTimer = 0;
 
         function setPower(mode, seconds) {
           powerMode = mode;
@@ -926,6 +938,14 @@
           let n = 0;
           for (const a of aliens) if (a.alive) n++;
           return n;
+        }
+
+        function updateAudioUI() {
+          if (!audio.enabled) {
+            audioState.textContent = "Tap/Key to enable audio";
+            return;
+          }
+          audioState.textContent = audio.muted ? "Sound: OFF" : "Sound: ON";
         }
 
         // Complex-ish part: formation edge detection + drop
@@ -1097,11 +1117,9 @@
                 explode(a.x + a.w / 2, a.y + a.h / 2, "rgba(255,80,80,0.95)");
 
                 function maybeDropPowerUp(x, y) {
-                  // шанс дропу: 18%
+                  // Random: 18%
                   if (Math.random() > 0.18) return;
 
-                  // Ваги (можеш підкрутити баланс)
-                  // серце трохи рідше, щоб не ламало гру
                   const table = [
                     { kind: "shield", w: 40 },
                     { kind: "double", w: 30 },
@@ -1144,7 +1162,7 @@
                 shieldCharges -= 1;
                 uiShield.textContent = String(shieldCharges);
                 b.dead = true;
-                // м’який ефект без втрати життя
+
                 audio.hit();
                 explode(
                   player.x + player.w / 2,
@@ -1200,7 +1218,7 @@
               lives = Math.min(5, lives + 1);
               uiLives.textContent = String(lives);
             } else if (kind === "shield") {
-              shieldCharges += 1; // або clamp до 1, якщо хочеш тільки один
+              shieldCharges += 1; // or clamp to 1, if you want only one
               uiShield.textContent = String(shieldCharges);
             } else if (kind === "double") {
               setPower("double", 10);
@@ -1243,8 +1261,8 @@
           if (down) {
             // Start audio on first interaction due to autoplay policies
             audio.ensure();
-            if (audio.enabled) audio.startMusic();
-            if (audio.enabled) audioState.textContent = "Audio: ON";
+            if (audio.enabled && !audio.muted) audio.startMusic();
+            updateAudioUI();
           }
 
           // Start from intro
@@ -1260,9 +1278,7 @@
             level = 1;
             resetGame(true);
             hidePanel();
-            audio.ensure();
-            if (audio.enabled) audio.startMusic();
-          }
+            }
         }
 
         window.addEventListener(
@@ -1281,8 +1297,8 @@
         // Also allow click/tap to start (useful for laptops/tablets)
         window.addEventListener("pointerdown", () => {
           audio.ensure();
-          if (audio.enabled) audio.startMusic();
-          if (state === GAME_STATE.START) startPlaying();
+          if (audio.enabled && !audio.muted) audio.startMusic();
+          updateAudioUI();
         });
 
         function startPlaying() {
@@ -1290,6 +1306,32 @@
           hidePanel();
           resetGame(true);
         }
+
+        function toggleSound() {
+          audio.ensure();
+          audio.toggleMuted();
+
+          if (audio.enabled && !audio.muted && state === GAME_STATE.PLAYING) {
+            audio.startMusic();
+          }
+          updateAudioUI();
+        }
+
+        audioChip.addEventListener("click", (e) => {
+          e.preventDefault();
+          toggleSound();
+        });
+
+        window.addEventListener(
+          "keydown",
+          (e) => {
+            if (e.code === "KeyM") {
+              e.preventDefault();
+              toggleSound();
+            }
+          },
+          { passive: false },
+        );
 
         // --- Rendering
         function beginFrameTransform() {
